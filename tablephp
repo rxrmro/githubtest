@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<style>
+    table {
+        border-collapse: collapse;
+        width: 90%; /* Slightly smaller width for better appearance */
+        max-width: 1200px; /* Prevents it from being too wide */
+        color: #333; /* Darker text for better contrast */
+        font-family: Arial, sans-serif; /* More modern font */
+        font-size: 24px; /* Large, readable font */
+        text-align: left;
+        margin: 20px auto; /* Center the table with margin */
+        border-radius: 8px;
+        overflow: hidden; /* Ensures border-radius applies */
+        box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1); /* Adds subtle shadow */
+    }
+    th, td {
+        border: 1px solid #ccc; /* Softer borders */
+        padding: 8px 15px; /* Balanced padding */
+        white-space: nowrap; /* Prevents unnecessary wrapping */
+    }
+    th {
+        background-color: #f8b400; /* Warm golden header */
+        color: white;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    tr:nth-child(even) {
+        background-color: #f9f9f9; /* Alternating row colors */
+    }
+    tr:hover {
+        background-color: #f1f1f1; /* Hover effect */
+    }
+</style>
+
+
+
+
+
+
+
+</head>
+<body>
+<table>
+<tr>
+    <th>Id</th>
+    <th>Username</th>
+    <th>Password</th>
+</tr>
+
+<?php
+// Connect to MySQL database
+$conn = mysqli_connect("localhost", "root", "", "company");
+
+// Check connection
+if (!$conn) {
+    die("Connection failed: " . mysqli_connect_error());
+}
+
+// Query the database
+$sql = "SELECT id, username, password FROM login";
+$result = mysqli_query($conn, $sql);
+
+if ($result) {
+    if (mysqli_num_rows($result) > 0) {
+        while ($row = mysqli_fetch_assoc($result)) {
+            echo "<tr><td>".$row["id"]."</td><td>". $row["username"] ."</td><td>" .$row["password"]."</td></tr>";
+        }
+    } else {
+        echo "<tr><td colspan='3'>No records found</td></tr>";
+    }
+} else {
+    echo "<tr><td colspan='3'>Query failed: " . mysqli_error($conn) . "</td></tr>";
+}
+
+// Close the connection
+mysqli_close($conn);
+?>
+
+</table>
+</body>
+</html>
