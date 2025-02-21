@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MongoDB Query Results</title>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid black;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h2>MongoDB Query Results</h2>
+    <?php
+    set_time_limit(20000);
+    
+    $mongoConn = "mongodb://csmcreport1:Arcu%24RPT%40cM%24c@10.12.0.23:45431/arcusairdb";
+    $mongodbname = "arcusairdb";
+    
+    $data = [];
+    
+    try {
+        $mongo = new MongoDB\Driver\Manager($mongoConn);
+        
+        $pipeline = [
+            ['$match' => [
+                'orderdate' => ['$gte' => new MongoDB\BSON\UTCDateTime(strtotime('2024-12-31 16:00:00') * 1000)],
+                'ordertodepartmentuid' => new MongoDB\BSON\ObjectId("5f9420970aa384a9e66541f1"), 
+                'patientorderitems.statusuid' => new MongoDB\BSON\ObjectId("5edcda8626070b2ec9e1640e"),
+                'patientorderitems.resultauthorizedat' => ['$gte' => new MongoDB\BSON\UTCDateTime(strtotime('2025-02-09 16:00:00') * 1000)]
+            ]],
+            ['$unwind' => '$patientorderitems'],
+            ['$match' => [
+                'patientorderitems.statusuid' => new MongoDB\BSON\ObjectId("5edcda8626070b2ec9e1640e"),
+                'patientorderitems.resultauthorizedat' => ['$gte' => new MongoDB\BSON\UTCDateTime(strtotime('2025-02-09 16:00:00') * 1000)]
+            ]],
+            ['$lookup' => [
+                'from' => 'radiologyresults',
+                'localField' => 'patientorderitems._id',
+                'foreignField' => 'patientorderitemuid',
+                'as' => 'result'
+            ]],
+            ['$unwind' => '$result'],
+            ['$match' => [
+                'result.statusflag' => 'A',
+                'result.reporttypestatusuid' => new MongoDB\BSON\ObjectId("5edcda8726070b2ec9e166fa")
+            ]],
+            ['$addFields' => [
+                'result' => null,
+        'result_statusuid' => '$result.statusuid',
+        'result_reporttypestatusuid' => '$result.reporttypestatusuid',
+        'resultdate' => [
+            '$dateToString' => [
+                'format' => '%Y-%m-%d %H:%M:%S',
+                'timezone' => '+08:00',
+                'date' => '$result.resultdate'
+                    ]
+                ]
+            ]],
+            ['$lookup' => [
+                'from' => 'patients',
+                'localField' => 'patientuid',
+                'foreignField' => '_id',
+                'as' => 'patient'
+            ]],
+            ['$unwind' => '$patient'],
+            ['$lookup' => [
+                'from' => 'patientvisits',
+                'localField' => 'patientvisituid',
+                'foreignField' => '_id',
+                'as' => 'visit'
+            ]],
+            ['$unwind' => '$visit'],
+            ['$lookup' => [
+                'from' => 'referencevalues',
+                'localField' => 'patientorderitems.statusuid',
+                'foreignField' => '_id',
+                'as' => 'orderitem_status'
+            ]],
+            ['$unwind' => '$orderitem_status'],
+            ['$lookup' => [
+                'from' => 'referencevalues',
+                'localField' => 'result_statusuid',
+                'foreignField' => '_id',
+                'as' => 'result_status'
+            ]],
+            ['$unwind' => '$result_status'],
+            ['$lookup' => [
+                'from' => 'referencevalues',
+                'localField' => 'result_reporttypestatusuid',
+                'foreignField' => '_id',
+                'as' => 'result_reportstatus'
+            ]],
+            ['$unwind' => '$result_reportstatus'],
+    
+            ['$project' => [
+                'mrn' => '$patient.mrn',
+                'visitid' => '$visit.visitid',
+                'ordernumber' => 1,
+                'itemcode' => '$patientorderitems.chargecode',
+                'itemname' => '$patientorderitems.orderitemname',
+                'resultdate' => 1
+            ]]
+        ];
+    
+        $query = new MongoDB\Driver\Command([
+            'aggregate' => 'patientorders',
+            'cursor' => new stdClass,
+            'allowDiskUse' => true,
+            'pipeline' => $pipeline
+        ]);
+    
+        $rows = $mongo->executeCommand($mongodbname, $query);
+        
+        echo "<table>
+                <tr>
+                    <th>MRN</th>
+                    <th>VisitID</th>
+                    <th>OrderNumber</th>
+                    <th>ItemCode</th>
+                    <th>ItemName</th>
+                    <th>ResultDate</th>
+                </tr>";
+        
+        foreach ($rows as $document) {
+            echo "<tr>
+                    <td>" . ($document->mrn ?? '') . "</td>
+                    <td>" . ($document->visitid ?? '') . "</td>
+                    <td>" . ($document->ordernumber ?? '') . "</td>
+                    <td>" . ($document->itemcode ?? '') . "</td>
+                    <td>" . ($document->itemname ?? '') . "</td>
+                    <td>" . ($document->resultdate ?? '') . "</td>
+                </tr>";
+        }
+        
+        echo "</table>";
+    
+    } catch (MongoDB\Driver\Exception\Exception $mongoError) {
+        echo "<p style='color: red;'>❌ MongoDB Query Error: " . $mongoError->getMessage() . "</p>";
+    } catch (Exception $e) {
+        echo "<p style='color: red;'>❌ General Error: " . $e->getMessage() . "</p>";
+    }
+    ?>
+</body>
+</html>
+
