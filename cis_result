@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CIS RESULT</title>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid black;
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h2>CIS Result</h2>
+    <form method="GET" action="podb.php">
+    <label for="start_date">Start Date:</label>
+    <input type="date" id="start_date" name="start_date" value="<?php echo $_GET['start_date']??''; ?>" required>
+
+    <label for="end_date">End Date:</label> 
+    <input type="date" id="end_date" name="end_date" value="<?php echo $_GET['end_date']??''; ?>" required>  
+
+    <button type="submit">Filter</button>
+</form>
+    <?php
+    set_time_limit(20000);
+
+    // MongoDB Connection
+    $mongoConn = "mongodb://csmcreport1:Arcu%24RPT%40cM%24c@10.12.0.23:45431/arcusairdb";
+    $mongodbname = "arcusairdb";
+
+    try {
+        $mongo = new MongoDB\Driver\Manager($mongoConn);
+         // Get date filters from URL parameters
+    $start_date = $_GET['start_date'] ?? null;
+    $end_date = $_GET['end_date'] ?? null;
+   
+
+
+
+
+    if (!$start_date || !$end_date) {
+        echo "<p style='color: red;'>⚠ Please select both Start Date and End Date.</p>";
+        exit;
+    }
+
+        // Aggregation Pipeline
+        $pipeline = [
+            ['$match' => [
+                'orderdate' => ['$gte' => new MongoDB\BSON\UTCDateTime(strtotime('2024-12-31 16:00:00') * 1000)],
+                'ordertodepartmentuid' => new MongoDB\BSON\ObjectId("5f9420970aa384a9e66541f1"), 
+                'patientorderitems.statusuid' => new MongoDB\BSON\ObjectId("5edcda8626070b2ec9e1640e"),
+                'patientorderitems.resultauthorizedat' => [
+                '$gte' => new MongoDB\BSON\UTCDateTime(strtotime($start_date.' 16:00:00') * 1000),
+                '$lte' => new MongoDB\BSON\UTCDateTime(strtotime($end_date.' 16:00:00') * 1000),
+                ]
+            ]],
+            ['$unwind' => '$patientorderitems'],
+            ['$match' => [
+                'patientorderitems.statusuid' => new MongoDB\BSON\ObjectId("5edcda8626070b2ec9e1640e"), 
+                'patientorderitems.resultauthorizedat' => ['$gte' => new MongoDB\BSON\UTCDateTime(strtotime('2025-02-09 16:00:00') * 1000)]
+            ]],
+            ['$lookup' => [
+                'from' => 'radiologyresults',
+                'localField' => 'patientorderitems._id',
+                'foreignField' => 'patientorderitemuid',
+                'as' => 'result'
+            ]],
+            ['$unwind' => '$result'],
+            ['$match' => ['result.statusflag' => 'A']],
+            ['$addFields' => [
+                'result' => null,
+                'result_statusuid' => '$result.statusuid',
+                'result_reporttypestatusuid' => '$result.reporttypestatusuid',
+                'result_ispdfresult' => '$result.ispdfresult',
+                'resultdate' => [
+                    '$dateToString' => [
+                        'format' => '%Y-%m-%d',
+                        'timezone' => '+08:00',
+                        'date' => '$result.resultdate'
+                    ]
+                ]
+            ]],
+            ['$lookup' => [
+                'from' => 'patients',
+                'localField' => 'patientuid',
+                'foreignField' => '_id',
+                'as' => 'patient'
+            ]],
+            ['$unwind' => '$patient'],
+            ['$lookup' => [
+                'from' => 'patientvisits',
+                'localField' => 'patientvisituid',
+                'foreignField' => '_id',
+                'as' => 'visit'
+            ]],
+            ['$unwind' => '$visit'],
+            ['$lookup' => [
+                'from' => 'referencevalues',
+                'localField' => 'patientorderitems.statusuid',
+                'foreignField' => '_id',
+                'as' => 'orderitem_status'
+            ]],
+            ['$unwind' => '$orderitem_status'],
+            ['$lookup' => [
+                'from' => 'referencevalues',
+                'localField' => 'result_statusuid',
+                'foreignField' => '_id',
+                'as' => 'result_status'
+            ]],
+            ['$unwind' => '$result_status'],
+            ['$lookup' => [
+                'from' => 'referencevalues',
+                'localField' => 'result_reporttypestatusuid',
+                'foreignField' => '_id',
+                'as' => 'result_reportstatus'
+            ]],
+            ['$unwind' => '$result_reportstatus'],
+            ['$sort' => ['resultdate' => 1]], // 1 = ascending, -1 = descending
+            ['$project' => [
+                'mrn' => '$patient.mrn',
+                'visitid' => '$visit.visitid',
+                'ordernumber' => 1,
+                'itemcode' => '$patientorderitems.chargecode',
+                'itemname' => '$patientorderitems.orderitemname',
+                'accessionnumber' => '$patientorderitems.accessionnumber',
+                'result_status' => '$result_status.valuedescription',
+                'result_reportstatus' => '$result_reportstatus.valuedescription',
+                'resultdate' => 1,
+                'ispdfresult' => '$result_ispdfresult'
+            ]]
+        ];
+           
+        // Execute Query
+        $query = new MongoDB\Driver\Command([
+            'aggregate' => 'patientorders',
+            'cursor' => new stdClass,
+            'allowDiskUse' => true,
+            'pipeline' => $pipeline
+        ]);
+
+        $rows = $mongo->executeCommand($mongodbname, $query);
+
+        $dates = [];
+        $data = [];
+
+        foreach ($rows as $document) {
+            $procedure = $document->itemname;
+            $date = $document->resultdate;
+            $dates[$date] = true;
+
+            if (!isset($data[$procedure])) {
+                $data[$procedure] = [];
+            }
+
+            if (!isset($data[$procedure][$date])) {
+                $data[$procedure][$date] = [
+                    'RA_Draft' => 0,
+                    'RA_Final' => 0,
+                    'RA_Integ' => 0,
+                    'Total' => 0,
+                ];
+            }
+
+            if ($document->ispdfresult ?? false)
+                $data[$procedure][$date]['RA_Integ']++;
+            else if ($document->result_reportstatus == 'Draft')
+                $data[$procedure][$date]['RA_Draft']++;
+            else if ($document->result_reportstatus == 'Finalize')
+                $data[$procedure][$date]['RA_Final']++;
+                $data[$procedure][$date]['Total']++;
+        }
+
+        // Sort dates
+        $dates = array_keys($dates);
+        usort($dates, function ($a, $b) {
+            return strtotime($a) - strtotime($b);
+        });
+
+        // Generate Table
+        echo "<table border='1' cellpadding='5'>";
+        
+        // Header Row 1: Date Columns
+        echo "<tr>";
+        echo "<th rowspan='2'>Procedure</th>";
+        foreach ($dates as $date) {
+            echo "<th colspan='4'>$date</th>";
+        }
+        echo "</tr>";
+        
+        // Header Row 2: RA Categories
+        echo "<tr>";
+        foreach ($dates as $date) {
+            echo "<th>RA(Draft)</th><th>RA(Final)</th><th>RA(Integ)</th><th>Total</th>";
+        }
+        echo "</tr>";
+        
+        // Data Rows
+        foreach ($data as $procedure => $dateResults) {
+            echo "<tr><td>$procedure</td>";
+        
+            foreach ($dates as $date) {
+                // Ensure the default structure for missing data
+                $values = $dateResults[$date] ?? ['RA_Draft' => 0, 'RA_Final' => 0, 'RA_Integ' => 0, 'Total' => 0];
+
+                $total = max(1, (int) $values['Total']); // Prevent division by zero safely
+
+                // Convert values to integers before calculations
+                $draftCount = (int) $values['RA_Draft'];
+                $finalCount = (int) $values['RA_Final'];
+                $integCount = (int) $values['RA_Integ'];
+
+                $draftPercentage = round(($draftCount / $total) * 100, 2);
+                $finalPercentage = round(($finalCount / $total) * 100, 2);
+                $integPercentage = round(($integCount / $total) * 100, 2);
+                
+
+                echo "<td>" . ($draftCount ? "$draftCount ({$draftPercentage}%)" : "-") . "</td>";
+                echo "<td>" . ($finalCount ? "$finalCount ({$finalPercentage}%)" : "-") . "</td>";
+                echo "<td>" . ($integCount ? "$integCount ({$integPercentage}%)" : "-") . "</td>";
+                echo "<td>" . ($values['Total'] ? $values['Total'] : "-") . "</td>";
+                
+            }
+
+            echo "</tr>";
+        }
+        
+        echo "</table>";
+
+    } catch (MongoDB\Driver\Exception\Exception $mongoError) {
+        echo "<p style='color: red;'>❌ MongoDB Query Error: " . $mongoError->getMessage() . "</p>";
+    } catch (Exception $e) {
+        echo "<p style='color: red;'>❌ General Error: " . $e->getMessage() . "</p>";
+    }
+    ?>
+</body>
+</html>
