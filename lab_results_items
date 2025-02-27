@@ -10,16 +10,30 @@ $myUser = "Integration";
 $myPass = "!nt3gr@Tion";
 $myDB = "CBCDB";
 $serverName = "SRV-DASHBOARD01";
+ // SQL Server Connection
+ $connectionOptions = [
+    "Database" => "PBDASHBOARDAA",
+    "Uid" => "Integration",
+    "PWD" => "!nt3gr@Tion"
+];
+$conn = sqlsrv_connect($serverName, $connectionOptions);
 
-$data = [];
-try {
-    // MongoDB Connection
-    $mongo = new MongoDB\Driver\Manager($mongoConn);
-    echo "✅ Connected to MongoDB successfully!\n";
-  
+if ($conn === false) {
+    echo "❌ SQL Server Connection Failed:\n";
+ 
+    $conn = null;
+} else {
+    echo "✅ Connected to SQL Server successfully!\n";
+
+}
+$mongo = new MongoDB\Driver\Manager($mongoConn);
 
 
 
+// START
+
+function main_logic(){
+   
     $pipeline = [
         [
             '$lookup' => [
@@ -98,156 +112,83 @@ try {
         'allowDiskUse' => true,
         'pipeline' => $pipeline
     ]);
-
-    try {
-        $rows = $mongo->executeCommand($mongodbname, $query);
-        //echo "<pre>MongoDB Results:\n";
-        // print_r(iterator_to_array($rows));die();
-        foreach ($rows as $document)
-        {
-        //    var_dump ($document);die();
-            $data[] = [
-                'PatientMRN' => $document->patientmrn ?? '',
-                'visitid' => $document->visitid ?? '',
-                'ResultName' => $document->resultName ?? '',
-                'ResultValuesId' => ''.($document->resultvaluesId ?? ''),
-                'resultvalue' => $document->resultvalue ?? '',
-                'NormalRange' => $document->normalRange ?? '',
-                'UOMDescription' => $document->uomDescription ?? '',
-                'HLN' => $document->HLN ?? '',
-                'ShortText' => $document->shorttext ?? '',
-                'OrderNumber' => $document->ordernumber ?? '',
-                'OrderItemCode' => $document->orderitemcode ?? '',
-                'resultdate' => $document->resultdate ?? '',
-            ];
-        }
-        //echo "</pre>\n";
-    } catch (MongoDB\Driver\Exception\Exception $mongoError) {
-        echo "❌ MongoDB Query Error: " . $mongoError->getMessage() . "\n";
-        $rows = null; // Ensure $rows is null if the query fails
+    $data = [];
+   
+    $rows = $mongo->executeCommand($mongodbname, $query);
+    //echo "<pre>MongoDB Results:\n";
+    // print_r(iterator_to_array($rows));die();
+    foreach ($rows as $document)
+    {
+    //    var_dump ($document);die();
+        $data[] = [
+            'PatientMRN' => $document->patientmrn ?? '',
+            'visitid' => $document->visitid ?? '',
+            'ResultName' => $document->resultName ?? '',
+            'ResultValuesId' => ''.($document->resultvaluesId ?? ''),
+            'resultvalue' => $document->resultvalue ?? '',
+            'NormalRange' => $document->normalRange ?? '',
+            'UOMDescription' => $document->uomDescription ?? '',
+            'HLN' => $document->HLN ?? '',
+            'ShortText' => $document->shorttext ?? '',
+            'OrderNumber' => $document->ordernumber ?? '',
+            'OrderItemCode' => $document->orderitemcode ?? '',
+            'resultdate' => $document->resultdate ?? '',
+        ];
     }
-    // SQL Server Connection
-    $connectionOptions = [
-        "Database" => "PBDASHBOARDAA",
-        "Uid" => "Integration",
-        "PWD" => "!nt3gr@Tion"
-    ];
-    $conn = sqlsrv_connect($serverName, $connectionOptions);
+    //echo "</pre>\n";
+   
 
-    if ($conn === false) {
-        echo "❌ SQL Server Connection Failed:\n";
-      //  echo "<pre>"; print_r(sqlsrv_errors()); echo "</pre>\n";  // Print errors for debugging
-         // Don't die, just set $conn to null to indicate failure
-        $conn = null;
-    } else {
-        echo "✅ Connected to SQL Server successfully!\n";
+    $params = [];
+    $stmt = [];
+    foreach ($data as $d)
+    {
+        $d['resultdate'] = !empty($d['resultdate']) ? $d['resultdate'] : date('Y-m-d H:i:s');
+        $createdAt = date('Y-m-d H:i:s'); // Set current timestamp for CreatedAt
+        $updatedAt = date('Y-m-d H:i:s'); // UpdatedAt should be the same as CreatedAt for new records
 
-          // Example SQL Server Query (replace with your actual query)
-        $sql = "SELECT  * FROM list_labresult_items"; // Replace SomeTable with your table name
-        $stmt = sqlsrv_query($conn, $sql);
+        $sql = "
+            MERGE INTO list_labresult_items AS target
+            USING (VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)) 
+            AS source (PatientMRN, visitid, ResultName, ResultValuesId, resultvalue, NormalRange, UOMDescription, 
+                    HLN, ShortText, OrderNumber, OrderItemCode, resultdate, CreatedAt, UpdatedAt)
+            ON target.ResultValuesId = source.ResultValuesId
+            WHEN MATCHED THEN 
+                UPDATE SET 
+                    target.resultvalue = source.resultvalue,
+                    target.NormalRange = source.NormalRange,
+                    target.UOMDescription = source.UOMDescription,
+                    target.HLN = source.HLN,
+                    target.ShortText = source.ShortText,
+                    target.OrderNumber = source.OrderNumber,
+                    target.OrderItemCode = source.OrderItemCode,
+                    target.resultdate = source.resultdate,
+                    target.UpdatedAt = source.UpdatedAt
+            WHEN NOT MATCHED THEN 
+                INSERT (PatientMRN, visitid, ResultName, ResultValuesId, resultvalue, NormalRange, UOMDescription, 
+                        HLN, ShortText, OrderNumber, OrderItemCode, resultdate, CreatedAt, UpdatedAt)
+                VALUES (source.PatientMRN, source.visitid, source.ResultName, source.ResultValuesId, source.resultvalue, 
+                        source.NormalRange, source.UOMDescription, source.HLN, source.ShortText, source.OrderNumber, 
+                        source.OrderItemCode, source.resultdate, source.CreatedAt, source.UpdatedAt);
+        ";
 
-        if ($stmt === false) {
-            echo "❌ SQL Server Query Failed:\n";
-            echo "<pre>"; print_r(sqlsrv_errors()); echo "</pre>\n";
-        } else {
-              $sqlServerResults = [];
-            while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
-                // $sqlServerResults[] = $row;
-            }
+        $params = array_values($d);
+        $params[] = $createdAt;
+        $params[] = $updatedAt;
 
-            echo "<pre>SQL Server Results:\n";
-            //print_r($sqlServerResults);
-            echo "</pre>\n";
-        }
-        if (isset($stmt)) {
-            sqlsrv_free_stmt($stmt); // Free statement resource
-        }
+        sqlsrv_query($conn, $sql, $params);
+
     }
-
-} catch (Exception $e) {
-    echo "❌ General Error: " . $e->getMessage() . "\n"; // Catch other potential exceptions
-} finally {
-    if (isset($conn)) {
-        // sqlsrv_close($conn);     // Close connection
-    }
-}
-
-
-
-function getData() {
-    return [
-        'PatientMRN' => $_POST['patientmrn'] ?? null,
-        'visitid' => $_POST['visitid'] ?? null,
-        'ResultName' => $_POST['resultname'] ?? null,
-        'ResultValuesId' => $_POST['resultvaluesid'] ?? null,
-        'resultvalue' => $_POST['resultvalue'] ?? null,
-        'NormalRange' => $_POST['normalrange'] ?? null,
-        'UOMDescription' => $_POST['uomdescription'] ?? null,
-        'HLN' => $_POST['HLN'] ?? null,
-        'ShortText' => $_POST['shorttext'] ?? null,
-        'OrderNumber' => $_POST['ordernumber'] ?? null,
-        'OrderItemCode' => $_POST['orderitemcode'] ?? null,
-        'resultdate' => $_POST['resultdate'] ?? null,
-    ];
-    // var_dump ($_POST);
-}
-
-// Check if form is submitted
-    // $data = getData();
-
-    // Prepare the SQL INSERT statement
-    // var_dump ($sql);
-
-
     
-
-      
-foreach ($data as $d)
-{
-    $d['resultdate'] = !empty($d['resultdate']) ? $d['resultdate'] : date('Y-m-d H:i:s');
-    $createdAt = date('Y-m-d H:i:s'); // Set current timestamp for CreatedAt
-    $updatedAt = date('Y-m-d H:i:s'); // UpdatedAt should be the same as CreatedAt for new records
-
-$sql = "
-MERGE INTO list_labresult_items AS target
-USING (VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)) 
-AS source (PatientMRN, visitid, ResultName, ResultValuesId, resultvalue, NormalRange, UOMDescription, 
-           HLN, ShortText, OrderNumber, OrderItemCode, resultdate, CreatedAt, UpdatedAt)
-ON target.ResultValuesId = source.ResultValuesId
-WHEN MATCHED THEN 
-    UPDATE SET 
-        target.resultvalue = source.resultvalue,
-        target.NormalRange = source.NormalRange,
-        target.UOMDescription = source.UOMDescription,
-        target.HLN = source.HLN,
-        target.ShortText = source.ShortText,
-        target.OrderNumber = source.OrderNumber,
-        target.OrderItemCode = source.OrderItemCode,
-        target.resultdate = source.resultdate,
-        target.UpdatedAt = source.UpdatedAt
-WHEN NOT MATCHED THEN 
-    INSERT (PatientMRN, visitid, ResultName, ResultValuesId, resultvalue, NormalRange, UOMDescription, 
-            HLN, ShortText, OrderNumber, OrderItemCode, resultdate, CreatedAt, UpdatedAt)
-    VALUES (source.PatientMRN, source.visitid, source.ResultName, source.ResultValuesId, source.resultvalue, 
-            source.NormalRange, source.UOMDescription, source.HLN, source.ShortText, source.OrderNumber, 
-            source.OrderItemCode, source.resultdate, source.CreatedAt, source.UpdatedAt);
-";
-
-$params = array_values($d);
-$params[] = $createdAt;
-$params[] = $updatedAt;
-
-$stmt = sqlsrv_query($conn, $sql, $params);
-
-if ($stmt === false) {
-    die(print_r(sqlsrv_errors(), true));
-} else {
-    echo "✅ Data upserted successfully!\n";
-}
-
+    return 1;
 }
 
 
+       
+
+
+echo main_logic();
+//OUTput: 1
+// END
 
 // Free statement and close connection
 sqlsrv_free_stmt($stmt);
