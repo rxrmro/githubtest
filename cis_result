@@ -21,7 +21,7 @@
 </head>
 <body>
     <h2>CIS Result</h2>
-    <form method="GET" action="podb.php">
+    <form method="GET" action="?">
     <label for="start_date">Start Date:</label>
     <input type="date" id="start_date" name="start_date" value="<?php echo $_GET['start_date']??''; ?>" required>
 

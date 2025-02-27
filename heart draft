@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Heart Station Result Draft</title>
+    <title>CIS RESULT</title>
     <style>
         table {
             width: 100%;
@@ -13,7 +12,7 @@
         th, td {
             border: 1px solid black;
             padding: 8px;
-            text-align: left;
+            text-align: center;
         }
         th {
             background-color: #f2f2f2;
@@ -21,18 +20,16 @@
     </style>
 </head>
 <body>
-    <h2>Heart Station Result Draft</h2>
+    <h2>CIS Result</h2>
     <?php
     set_time_limit(20000);
-    
+
     $mongoConn = "mongodb://csmcreport1:Arcu%24RPT%40cM%24c@10.12.0.23:45431/arcusairdb";
     $mongodbname = "arcusairdb";
-    
-    $data = [];
-    
+
     try {
         $mongo = new MongoDB\Driver\Manager($mongoConn);
-        
+
         $pipeline = [
             ['$match' => [
                 'orderdate' => ['$gte' => new MongoDB\BSON\UTCDateTime(strtotime('2024-12-31 16:00:00') * 1000)],
@@ -41,10 +38,6 @@
                 'patientorderitems.resultauthorizedat' => ['$gte' => new MongoDB\BSON\UTCDateTime(strtotime('2025-02-09 16:00:00') * 1000)]
             ]],
             ['$unwind' => '$patientorderitems'],
-            ['$match' => [
-                'patientorderitems.statusuid' => new MongoDB\BSON\ObjectId("5edcda8626070b2ec9e1640e"),
-                'patientorderitems.resultauthorizedat' => ['$gte' => new MongoDB\BSON\UTCDateTime(strtotime('2025-02-09 16:00:00') * 1000)]
-            ]],
             ['$lookup' => [
                 'from' => 'radiologyresults',
                 'localField' => 'patientorderitems._id',
@@ -52,104 +45,90 @@
                 'as' => 'result'
             ]],
             ['$unwind' => '$result'],
-            ['$match' => [
-                'result.statusflag' => 'A',
-                'result.reporttypestatusuid' => new MongoDB\BSON\ObjectId("5edcda8726070b2ec9e166fa")
-            ]],
+            ['$match' => ['result.statusflag' => 'A']],
             ['$addFields' => [
-                'result' => null,
-        'result_statusuid' => '$result.statusuid',
-        'result_reporttypestatusuid' => '$result.reporttypestatusuid',
-        'resultdate' => [
-            '$dateToString' => [
-                'format' => '%Y-%m-%d %H:%M:%S',
-                'timezone' => '+08:00',
-                'date' => '$result.resultdate'
+                'resultdate' => [
+                    '$dateToString' => [
+                        'format' => '%Y-%m-%d',
+                        'timezone' => '+08:00',
+                        'date' => '$result.resultdate'
                     ]
                 ]
             ]],
-            ['$lookup' => [
-                'from' => 'patients',
-                'localField' => 'patientuid',
-                'foreignField' => '_id',
-                'as' => 'patient'
+            ['$group' => [
+                '_id' => ['procedure' => '$patientorderitems.orderitemname', 'date' => '$resultdate'],
+                'RA_Draft' => ['$sum' => ['$cond' => [['$eq' => ['$result.reporttypestatusuid', 'DRAFT_UID']], 1, 0]]],
+                'RA_Final' => ['$sum' => ['$cond' => [['$eq' => ['$result.reporttypestatusuid', 'FINAL_UID']], 1, 0]]],
+                'RA_Integ' => ['$sum' => ['$cond' => [['$eq' => ['$result.reporttypestatusuid', 'INTEG_UID']], 1, 0]]],
+                'Total' => ['$sum' => 1]
             ]],
-            ['$unwind' => '$patient'],
-            ['$lookup' => [
-                'from' => 'patientvisits',
-                'localField' => 'patientvisituid',
-                'foreignField' => '_id',
-                'as' => 'visit'
-            ]],
-            ['$unwind' => '$visit'],
-            ['$lookup' => [
-                'from' => 'referencevalues',
-                'localField' => 'patientorderitems.statusuid',
-                'foreignField' => '_id',
-                'as' => 'orderitem_status'
-            ]],
-            ['$unwind' => '$orderitem_status'],
-            ['$lookup' => [
-                'from' => 'referencevalues',
-                'localField' => 'result_statusuid',
-                'foreignField' => '_id',
-                'as' => 'result_status'
-            ]],
-            ['$unwind' => '$result_status'],
-            ['$lookup' => [
-                'from' => 'referencevalues',
-                'localField' => 'result_reporttypestatusuid',
-                'foreignField' => '_id',
-                'as' => 'result_reportstatus'
-            ]],
-            ['$unwind' => '$result_reportstatus'],
-    
-            ['$project' => [
-                'mrn' => '$patient.mrn',
-                'visitid' => '$visit.visitid',
-                'ordernumber' => 1,
-                'itemcode' => '$patientorderitems.chargecode',
-                'itemname' => '$patientorderitems.orderitemname',
-                'accessionnumber' => '$patientorderitems.accessionnumber',
-                'resultdate' => 1
-            ]]
+            ['$sort' => ['_id.date' => 1]]
         ];
-    
+
         $query = new MongoDB\Driver\Command([
             'aggregate' => 'patientorders',
             'cursor' => new stdClass,
             'allowDiskUse' => true,
             'pipeline' => $pipeline
         ]);
-    
-        $rows = $mongo->executeCommand($mongodbname, $query);
-        
-        echo "<table>
-                <tr>
-                    <th>MRN</th>
-                    <th>VisitID</th>
-                    <th>OrderNumber</th>
-                    <th>AccessionNumber</th>
-                    <th>ItemCode</th>
-                    <th>ItemName</th>
-                    <th>ResultDate</th>
-                </tr>";
-        
-        foreach ($rows as $document) {
-            echo "<tr>
-                    <td>" . ($document->mrn ?? '') . "</td>
-                    <td>" . ($document->visitid ?? '') . "</td>
-                    <td>" . ($document->ordernumber ?? '') . "</td>
-                    <td>" . ($document->accessionnumber ?? '') . "</td>
-                    <td>" . ($document->itemcode ?? '') . "</td>
-                    <td>" . ($document->itemname ?? '') . "</td>
-                    <td>" . ($document->resultdate ?? '') . "</td>
 
-                </tr>";
+        $rows = $mongo->executeCommand($mongodbname, $query);
+
+        $data = [];
+        $dates = [];
+
+        // Organizing data
+        foreach ($rows as $document) {
+            $procedure = $document->_id->procedure;
+            $date = $document->_id->date;
+            $dates[$date] = true;
+
+            $data[$procedure][$date] = [
+                'RA_Draft' => $document->RA_Draft ?? 0,
+                'RA_Final' => $document->RA_Final ?? 0,
+                'RA_Integ' => $document->RA_Integ ?? 0,
+                'Total' => $document->Total ?? 0
+            ];
         }
+
+        // Sorting dates in ascending order
+        $dates = array_keys($dates);
+        sort($dates);  // Ensures chronological order
+
+        // Generate table
+        echo "<table>";
         
+        // First row: Merged date headers
+        echo "<tr>";
+        echo "<th rowspan='2'>Procedure</th>";
+        foreach ($dates as $date) {
+            echo "<th colspan='4'>$date</th>";
+        }
+        echo "</tr>";
+
+        // Second row: RA Categories
+        echo "<tr>";
+        foreach ($dates as $date) {
+            echo "<th>RA(Draft)</th><th>RA(Final)</th><th>RA(Integ)</th><th>Total</th>";
+        }
+        echo "</tr>";
+
+        // Rows for each procedure
+        foreach ($data as $procedure => $dateResults) {
+            echo "<tr>";
+            echo "<td>$procedure</td>";
+            foreach ($dates as $date) {
+                $values = $dateResults[$date] ?? ['RA_Draft' => 0, 'RA_Final' => 0, 'RA_Integ' => 0, 'Total' => 0];
+                echo "<td>{$values['RA_Draft']}</td>";
+                echo "<td>{$values['RA_Final']}</td>";
+                echo "<td>{$values['RA_Integ']}</td>";
+                echo "<td>{$values['Total']}</td>";
+            }
+            echo "</tr>";
+        }
+
         echo "</table>";
-    
+
     } catch (MongoDB\Driver\Exception\Exception $mongoError) {
         echo "<p style='color: red;'>❌ MongoDB Query Error: " . $mongoError->getMessage() . "</p>";
     } catch (Exception $e) {
